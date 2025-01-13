@@ -16,118 +16,147 @@ struct Options {
     pub harness: String,
 }
 
+async fn minimize_with_afl(
+    input: &PathBuf,
+    output: &PathBuf,
+    harness: &str,
+    config: &ProjectConfig,
+) -> Result<bool, std::io::Error> {
+    if !config.has_engine(&FuzzEngine::AflPlusPlus) || !config.has_sanitizer(&Sanitizer::None) {
+        return Ok(false);
+    }
+
+    let binary = get_harness_binary(&FuzzEngine::AflPlusPlus, &Sanitizer::None, harness, config)
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "Harness binary not found")
+        })?;
+
+    Command::new("afl-cmin")
+        .args([
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+            "--",
+            binary.to_str().unwrap(),
+        ])
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map(|status| status.success())
+}
+
+async fn minimize_with_libfuzzer(
+    input: &PathBuf,
+    output: &PathBuf,
+    harness: &str,
+    config: &ProjectConfig,
+) -> Result<bool, std::io::Error> {
+    if !config.has_engine(&FuzzEngine::LibFuzzer) || !config.has_sanitizer(&Sanitizer::None) {
+        return Ok(false);
+    }
+
+    let binary = get_harness_binary(&FuzzEngine::LibFuzzer, &Sanitizer::None, harness, config)
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "Harness binary not found")
+        })?;
+
+    Command::new(binary)
+        .args([
+            "-rss_limit_mb=8000",
+            "-set_cover_merge=1",
+            "-shuffle=0",
+            "-prefer_small=1",
+            "-use_value_profile=0",
+            output.to_str().unwrap(),
+            input.to_str().unwrap(),
+        ])
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map(|status| status.success())
+}
+
+async fn minimize_with_honggfuzz(
+    input: &PathBuf,
+    output: &PathBuf,
+    harness: &str,
+    config: &ProjectConfig,
+) -> Result<bool, std::io::Error> {
+    if !config.has_engine(&FuzzEngine::HonggFuzz) || !config.has_sanitizer(&Sanitizer::None) {
+        return Ok(false);
+    }
+
+    let binary = get_harness_binary(&FuzzEngine::HonggFuzz, &Sanitizer::None, harness, config)
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "Harness binary not found")
+        })?;
+
+    Command::new("honggfuzz")
+        .args([
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+            "--minimize",
+            "--",
+            binary.to_str().unwrap(),
+        ])
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map(|status| status.success())
+}
+
+async fn copy_for_native_go(
+    input: &PathBuf,
+    output: &PathBuf,
+    config: &ProjectConfig,
+) -> Result<bool, std::io::Error> {
+    if !config.has_engine(&FuzzEngine::NativeGo) || !config.has_sanitizer(&Sanitizer::None) {
+        return Ok(false);
+    }
+
+    Command::new("cp")
+        .args(["-r", input.to_str().unwrap(), output.to_str().unwrap()])
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map(|status| status.success())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     let opts = Options::parse();
+    let config: ProjectConfig =
+        serde_yaml::from_str(&fs::read_to_string(&opts.config).await?).unwrap();
 
-    let config = fs::read_to_string(&opts.config).await?;
-    let config: ProjectConfig = serde_yaml::from_str(&config).unwrap();
-
-    let afl_success =
-        if config.has_engine(&FuzzEngine::AflPlusPlus) && config.has_sanitizer(&Sanitizer::None) {
-            let status = Command::new("afl-cmin")
-                .args(vec![
-                    "-i",
-                    opts.input_corpus.as_os_str().to_str().unwrap(),
-                    "-o",
-                    opts.output_corpus.as_os_str().to_str().unwrap(),
-                    "--",
-                    get_harness_binary(
-                        &FuzzEngine::AflPlusPlus,
-                        &Sanitizer::None,
-                        &opts.harness,
-                        &config,
-                    )
-                    .unwrap()
-                    .to_str()
-                    .unwrap(),
-                ])
-                .kill_on_drop(true)
-                .status()
-                .await?;
-
-            status.success()
-        } else {
-            false
-        };
-
-    let libfuzzer_success =
-        if config.has_engine(&FuzzEngine::LibFuzzer) && config.has_sanitizer(&Sanitizer::None) {
-            let status = Command::new(
-                get_harness_binary(
-                    &FuzzEngine::LibFuzzer,
-                    &Sanitizer::None,
-                    &opts.harness,
-                    &config,
-                )
-                .unwrap(),
-            )
-            .args(vec![
-                "-rss_limit_mb=8000",
-                "-set_cover_merge=1",
-                "-shuffle=0",
-                "-prefer_small=1",
-                "-use_value_profile=0",
-                opts.output_corpus.as_os_str().to_str().unwrap(),
-                opts.input_corpus.as_os_str().to_str().unwrap(),
-            ])
-            .kill_on_drop(true)
-            .status()
-            .await?;
-
-            status.success()
-        } else {
-            false
-        };
-
-    let honggfuzz_success =
-        if config.has_engine(&FuzzEngine::HonggFuzz) && config.has_sanitizer(&Sanitizer::None) {
-            let hfuzz_binary = get_harness_binary(
-                &FuzzEngine::HonggFuzz,
-                &Sanitizer::None,
-                &opts.harness,
-                &config,
-            )
-            .unwrap();
-
-            let status = Command::new("honggfuzz")
-                .args(vec![
-                    "--input",
-                    opts.input_corpus.to_str().unwrap(),
-                    "--output",
-                    opts.output_corpus.to_str().unwrap(),
-                    "--minimize",
-                    "--",
-                    hfuzz_binary.to_str().unwrap(),
-                ])
-                .kill_on_drop(true)
-                .status()
-                .await?;
-
-            status.success()
-        } else {
-            false
-        };
-
-    // Native go fuzzing does not support minimization (like really???)
+    // Run all available minimizers
+    let afl_success = minimize_with_afl(
+        &opts.input_corpus,
+        &opts.output_corpus,
+        &opts.harness,
+        &config,
+    )
+    .await?;
+    let libfuzzer_success = minimize_with_libfuzzer(
+        &opts.input_corpus,
+        &opts.output_corpus,
+        &opts.harness,
+        &config,
+    )
+    .await?;
+    let honggfuzz_success = minimize_with_honggfuzz(
+        &opts.input_corpus,
+        &opts.output_corpus,
+        &opts.harness,
+        &config,
+    )
+    .await?;
     let native_go_success =
-        if config.has_engine(&FuzzEngine::NativeGo) && config.has_sanitizer(&Sanitizer::None) {
-            let status = Command::new("cp")
-                .args(vec![
-                    "-r",
-                    opts.input_corpus.as_os_str().to_str().unwrap(),
-                    opts.output_corpus.as_os_str().to_str().unwrap(),
-                ])
-                .kill_on_drop(true)
-                .status()
-                .await?;
+        copy_for_native_go(&opts.input_corpus, &opts.output_corpus, &config).await?;
 
-            status.success()
-        } else {
-            false
-        };
-
-    if !afl_success && !libfuzzer_success && !native_go_success && !honggfuzz_success {
+    if !afl_success && !libfuzzer_success && !honggfuzz_success && !native_go_success {
         std::process::exit(1);
     }
 

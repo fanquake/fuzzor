@@ -24,121 +24,101 @@ struct Options {
     pub workspace: PathBuf,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), std::io::Error> {
-    let opts = Options::parse();
+struct FuzzerConfiguration {
+    config: ProjectConfig,
+    total_cores: usize,
+    supported_fuzzers: Vec<(FuzzEngine, Sanitizer)>,
+    cores_assigned: usize,
+    extra_args: Vec<String>,
+}
 
-    let config = fs::read_to_string(&opts.config).await?;
-    let config: ProjectConfig = serde_yaml::from_str(&config).unwrap();
-
-    let add_fuzzer =
-        |engine: &FuzzEngine, sanitizer: &Sanitizer, command: &mut tokio::process::Command| {
-            assert!(config.has_sanitizer(sanitizer));
-            assert!(config.has_engine(engine));
-
-            let sanitizer_str = match sanitizer {
-                Sanitizer::None => None,
-                Sanitizer::Coverage => None,
-                Sanitizer::Address => Some("asan"),
-                Sanitizer::Undefined => Some("ubsan"),
-                Sanitizer::Memory => Some("msan"),
-                Sanitizer::CmpLog => Some("cmplog"),
-                Sanitizer::ValueProfile => None,
-                Sanitizer::SemSan(_) => Some("secondary"),
-            };
-
-            let engine_str = match engine {
-                FuzzEngine::None => panic!("Can't add FuzzEngine::None to ensemble-fuzz flags"),
-                FuzzEngine::LibFuzzer => "libfuzzer",
-                FuzzEngine::AflPlusPlus => "aflpp",
-                FuzzEngine::HonggFuzz => "honggfuzz",
-                FuzzEngine::SemSan => "semsan",
-                FuzzEngine::NativeGo => "native-go",
-            };
-
-            command.arg(
-                sanitizer_str.map_or(format!("--{}-binary", engine_str), |sanitizer_str| {
-                    format!("--{}-{}-binary", engine_str, sanitizer_str)
-                }),
-            );
-
-            command.arg(get_harness_binary(engine, sanitizer, &opts.harness, &config).unwrap());
-        };
-
-    let mut command = tokio::process::Command::new("ensemble-fuzz");
-    // afl++ requires symbolize=0
-    command.env("ASAN_OPTIONS", "detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:abort_on_error=1:symbolize=0");
-    let mut supported_fuzzers = Vec::new();
-
-    let mut cores_assigned = 0;
-
-    if config.has_engine(&FuzzEngine::NativeGo) && num_cpus::get() > cores_assigned {
-        cores_assigned = num_cpus::get();
-        supported_fuzzers.push((FuzzEngine::NativeGo, Sanitizer::None));
-    }
-
-    if config.has_engine(&FuzzEngine::SemSan) && num_cpus::get() > cores_assigned {
-        if let Some(sanitizers) = &config.sanitizers {
-            supported_fuzzers.push((FuzzEngine::SemSan, Sanitizer::None));
-            for sanitizer in sanitizers.iter() {
-                if matches!(sanitizer, &Sanitizer::SemSan(_))
-                    && config.has_sanitizer(sanitizer)
-                    && num_cpus::get() > cores_assigned
-                {
-                    supported_fuzzers.push((FuzzEngine::SemSan, sanitizer.clone()));
-                    cores_assigned += 1;
-                }
-            }
+impl FuzzerConfiguration {
+    fn new(config: ProjectConfig) -> Self {
+        Self {
+            config,
+            total_cores: num_cpus::get(),
+            supported_fuzzers: Vec::new(),
+            cores_assigned: 0,
+            extra_args: Vec::new(),
         }
     }
 
-    if config.has_engine(&FuzzEngine::LibFuzzer) && num_cpus::get() > cores_assigned {
-        supported_fuzzers.push((FuzzEngine::LibFuzzer, Sanitizer::None));
-        cores_assigned += 1;
-        if config.has_sanitizer(&Sanitizer::ValueProfile) && num_cpus::get() > cores_assigned {
-            command.arg("--libfuzzer-value-profile");
-            cores_assigned += 1;
-        }
-
-        if !config.has_engine(&FuzzEngine::AflPlusPlus) {
-            // We only add libFuzzer sanitizer instances if we haven't already afl++ instances.
-            for sanitizer in &[Sanitizer::Address, Sanitizer::Undefined, Sanitizer::Memory] {
-                if config.has_sanitizer(sanitizer) && num_cpus::get() > cores_assigned {
-                    supported_fuzzers.push((FuzzEngine::LibFuzzer, sanitizer.clone()));
-                    cores_assigned += 1;
-                }
-            }
-        }
-
-        if !config.has_engine(&FuzzEngine::AflPlusPlus) {
-            // Allocate additional cores to libfuzzer if afl++ is not enabled
-            if num_cpus::get() > cores_assigned {
-                command.arg("--libfuzzer-add-cores");
-                command.arg((num_cpus::get() - cores_assigned).to_string());
-            }
-        }
+    fn has_available_cores(&self) -> bool {
+        self.total_cores > self.cores_assigned
     }
 
-    if config.has_engine(&FuzzEngine::HonggFuzz) && num_cpus::get() > cores_assigned {
-        supported_fuzzers.push((FuzzEngine::HonggFuzz, Sanitizer::None));
-        cores_assigned += 1;
-
-        // TODO honggfuzz sanitizers
-
-        if !config.has_engine(&FuzzEngine::AflPlusPlus)
-            && !config.has_engine(&FuzzEngine::LibFuzzer)
+    fn try_add_fuzzer(&mut self, engine: FuzzEngine, sanitizer: Sanitizer) -> bool {
+        if self.has_available_cores()
+            && self.config.has_engine(&engine)
+            && self.config.has_sanitizer(&sanitizer)
         {
-            // Allocate additional cores to honggfuzz if afl++ and libfuzzer are not enabled
-            if num_cpus::get() > cores_assigned {
-                command.arg("--honggfuzz-add-cores");
-                command.arg((num_cpus::get() - cores_assigned).to_string());
+            self.supported_fuzzers.push((engine, sanitizer));
+            self.cores_assigned += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn configure_native_go(&mut self) {
+        if self.try_add_fuzzer(FuzzEngine::NativeGo, Sanitizer::None) {
+            self.cores_assigned = self.total_cores; // NativeGo takes all remaining cores
+        }
+    }
+
+    fn configure_semsan(&mut self) {
+        // First collect the sanitizers we want to add
+        let semsan_sanitizers: Vec<_> = self
+            .config
+            .sanitizers
+            .as_ref()
+            .map(|sanitizers| {
+                sanitizers
+                    .iter()
+                    .filter(|s| matches!(s, Sanitizer::SemSan(_)))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Then add them one by one
+        if self.try_add_fuzzer(FuzzEngine::SemSan, Sanitizer::None) {
+            for sanitizer in semsan_sanitizers {
+                self.try_add_fuzzer(FuzzEngine::SemSan, sanitizer);
             }
         }
     }
 
-    if config.has_engine(&FuzzEngine::AflPlusPlus) && num_cpus::get() > cores_assigned {
-        supported_fuzzers.push((FuzzEngine::AflPlusPlus, Sanitizer::None));
-        cores_assigned += 1;
+    fn configure_libfuzzer(&mut self) {
+        if !self.try_add_fuzzer(FuzzEngine::LibFuzzer, Sanitizer::None) {
+            return;
+        }
+
+        if self.config.has_sanitizer(&Sanitizer::ValueProfile) && self.has_available_cores() {
+            self.extra_args
+                .push("--libfuzzer-value-profile".to_string());
+            self.cores_assigned += 1;
+        }
+
+        if !self.config.has_engine(&FuzzEngine::AflPlusPlus) {
+            // Add sanitizer instances only if AFL++ is not present
+            for sanitizer in &[Sanitizer::Address, Sanitizer::Undefined, Sanitizer::Memory] {
+                self.try_add_fuzzer(FuzzEngine::LibFuzzer, sanitizer.clone());
+            }
+
+            // Allocate remaining cores to LibFuzzer if available
+            if self.has_available_cores() {
+                self.extra_args.push("--libfuzzer-add-cores".to_string());
+                self.extra_args
+                    .push((self.total_cores - self.cores_assigned).to_string());
+            }
+        }
+    }
+
+    fn configure_aflplusplus(&mut self) {
+        if !self.try_add_fuzzer(FuzzEngine::AflPlusPlus, Sanitizer::None) {
+            return;
+        }
 
         for sanitizer in &[
             Sanitizer::CmpLog,
@@ -146,27 +126,90 @@ async fn main() -> Result<(), std::io::Error> {
             Sanitizer::Undefined,
             Sanitizer::Memory,
         ] {
-            if config.has_sanitizer(sanitizer) && num_cpus::get() > cores_assigned {
-                supported_fuzzers.push((FuzzEngine::AflPlusPlus, sanitizer.clone()));
-                cores_assigned += 1;
-            }
+            self.try_add_fuzzer(FuzzEngine::AflPlusPlus, sanitizer.clone());
         }
 
-        // Occupy left over cores with afl++ instances
-        command.arg("--aflpp-occupy");
+        self.extra_args.push("--aflpp-occupy".to_string());
     }
 
-    for (engine, sanitizer) in supported_fuzzers.iter() {
-        add_fuzzer(engine, sanitizer, &mut command);
+    fn build_command(&self, opts: &Options) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new("ensemble-fuzz");
+
+        // Set ASAN options
+        command.env("ASAN_OPTIONS", 
+            "detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:abort_on_error=1:symbolize=0");
+
+        // Add all configured fuzzers
+        for (engine, sanitizer) in &self.supported_fuzzers {
+            add_fuzzer(engine, sanitizer, &mut command, &opts.harness, &self.config);
+        }
+
+        // Add all extra arguments
+        command.args(&self.extra_args);
+
+        // Configure duration and workspace
+        let seconds_to_fuzz = (opts.duration / self.total_cores as f64) * 60.0 * 60.0;
+        command
+            .arg("--max-duration")
+            .arg((seconds_to_fuzz as u64).to_string())
+            .arg("--workspace")
+            .arg(&opts.workspace);
+
+        command
     }
+}
 
-    let seconds_to_fuzz = (opts.duration / num_cpus::get() as f64) * 60.0 * 60.0;
-    command.arg("--max-duration");
-    command.arg((seconds_to_fuzz as u64).to_string());
+// Helper function moved outside the struct
+fn add_fuzzer(
+    engine: &FuzzEngine,
+    sanitizer: &Sanitizer,
+    command: &mut tokio::process::Command,
+    harness: &str,
+    config: &ProjectConfig,
+) {
+    let sanitizer_str = match sanitizer {
+        Sanitizer::None | Sanitizer::Coverage | Sanitizer::ValueProfile => None,
+        Sanitizer::Address => Some("asan"),
+        Sanitizer::Undefined => Some("ubsan"),
+        Sanitizer::Memory => Some("msan"),
+        Sanitizer::CmpLog => Some("cmplog"),
+        Sanitizer::SemSan(_) => Some("secondary"),
+    };
 
-    command.arg("--workspace");
-    command.arg(&opts.workspace);
+    let engine_str = match engine {
+        FuzzEngine::None => panic!("Can't add FuzzEngine::None to ensemble-fuzz flags"),
+        FuzzEngine::LibFuzzer => "libfuzzer",
+        FuzzEngine::AflPlusPlus => "aflpp",
+        FuzzEngine::HonggFuzz => "honggfuzz",
+        FuzzEngine::SemSan => "semsan",
+        FuzzEngine::NativeGo => "native-go",
+    };
 
+    let flag = sanitizer_str.map_or(format!("--{}-binary", engine_str), |s| {
+        format!("--{}-{}-binary", engine_str, s)
+    });
+
+    command
+        .arg(flag)
+        .arg(get_harness_binary(engine, sanitizer, harness, config).unwrap());
+}
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    let opts = Options::parse();
+    let config: ProjectConfig =
+        serde_yaml::from_str(&fs::read_to_string(&opts.config).await?).unwrap();
+
+    let mut fuzzer_config = FuzzerConfiguration::new(config);
+
+    // Configure fuzzers
+    fuzzer_config.configure_native_go();
+    fuzzer_config.configure_semsan();
+    fuzzer_config.configure_libfuzzer();
+    fuzzer_config.configure_aflplusplus();
+
+    // Build and execute command
+    let mut command = fuzzer_config.build_command(&opts);
     let status = command.kill_on_drop(true).status().await?;
     std::process::exit(status.code().unwrap());
 }
