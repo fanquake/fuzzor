@@ -39,12 +39,12 @@ cmake --build build_fuzz -j$(nproc)
 #
 # Fuzzor will use the FUZZ env variable to the select the active harness
 # (hopefully this can change once Bitcoin Core has CMake).
-cp ./build_fuzz/src/test/fuzz/fuzz $OUT/
+cp ./build_fuzz/bin/fuzz $OUT/
 chmod +x $OUT/fuzz
 
 # Create an empty file for each harness in $OUT. Fuzzor uses this to get the
 # list of available harnesses.
-WRITE_ALL_FUZZ_TARGETS_AND_ABORT="/tmp/a" "./build_fuzz/src/test/fuzz/fuzz" || true
+WRITE_ALL_FUZZ_TARGETS_AND_ABORT="/tmp/a" "./build_fuzz/bin/fuzz" || true
 readarray FUZZ_TARGETS < "/tmp/a"
 for fuzz_target in ${FUZZ_TARGETS[@]}; do
   touch "$OUT/$fuzz_target"
