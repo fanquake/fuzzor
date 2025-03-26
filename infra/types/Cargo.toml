@@ -12,6 +12,7 @@ strip = "symbols"
 [dependencies]
 serde = { version = "1.0.197", features = ["derive"] }
 serde_with = { version = "3.8.1", features = ["base64"] }
+sha2 = "0.10.8"
 
 [lib]
 name = "types"

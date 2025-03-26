@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_with::{base64::Base64, serde_as};
+use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Language {
@@ -150,6 +151,17 @@ pub struct ReproducedSolution {
     /// A stack trace for crashes or a flamegraph SVG for timeouts
     #[serde_as(as = "Base64")]
     pub trace: Vec<u8>,
+}
+
+impl ReproducedSolution {
+    pub fn name(&self) -> String {
+        let input_hash = Sha256::digest(&self.input);
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        format!("fuzzor-{}-{}-{:x}", time, self.code, input_hash)
+    }
 }
 
 pub fn format_image_name(config: &ProjectConfig) -> String {
