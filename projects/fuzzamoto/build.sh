@@ -77,8 +77,8 @@ for scenario in ../fuzzamoto/target/release/scenario-*; do
       python3 /AFLplusplus/nyx_mode/packer/packer/nyx_config_gen.py $SCENARIO_NYX_DIR Kernel -m 4096
     elif [[ "$FUZZING_ENGINE" = *"aflpp"* ]]; then
       mkdir $OUT/fuzzamoto_${scenario_name}
-      cp ../fuzzamoto/target/release/${scenario_name} $OUT/fuzzamoto_${scenario_name}
-      cp ./build_fuzz/bin/bitcoind $OUT/fuzzamoto_${scenario_name}
+      cp ../fuzzamoto/target/release/${scenario_name} $OUT/fuzzamoto_${scenario_name}/scenario
+      cp ./build_fuzz/bin/bitcoind $OUT/fuzzamoto_${scenario_name}/bitcoind
     fi
   fi
 done

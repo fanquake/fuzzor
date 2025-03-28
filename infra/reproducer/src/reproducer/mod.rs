@@ -1,7 +1,9 @@
+mod fuzzamoto;
 mod libfuzzer;
 mod native_go;
 mod semsan;
 
+pub use fuzzamoto::FuzzamotoReproducer;
 pub use libfuzzer::LibFuzzerReproducer;
 pub use native_go::NativeGoReproducer;
 pub use semsan::SemSanReproducer;

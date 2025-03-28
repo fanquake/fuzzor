@@ -7,7 +7,9 @@ use tokio::fs;
 
 use fuzzor_infra::{get_harness_binary, FuzzEngine, ProjectConfig, Sanitizer};
 
-use reproducer::{LibFuzzerReproducer, NativeGoReproducer, Reproducer, SemSanReproducer};
+use reproducer::{
+    FuzzamotoReproducer, LibFuzzerReproducer, NativeGoReproducer, Reproducer, SemSanReproducer,
+};
 use std::error::Error;
 
 async fn reproduce<E: Error, R: Reproducer<E>>(reproducer: R, output_dir: &PathBuf) {
@@ -74,6 +76,38 @@ async fn main() -> Result<(), std::io::Error> {
     ) {
         // Reproduce Go testcases that have been written to testdata/fuzz/<harness>/<testcase>.
         reproduce(NativeGoReproducer::new(native_go_bin), &opts.output_dir).await;
+
+        return Ok(());
+    }
+
+    if config.name == "fuzzamoto" {
+        // Special case for fuzzamoto reproduction
+        let fuzzamoto_dir = get_harness_binary(
+            &FuzzEngine::AflPlusPlusNyx,
+            &Sanitizer::None, // actually ASan
+            &opts.harness,
+            &config,
+        )
+        .expect("Could not find fuzzamoto harness");
+
+        for file in opts.solutions.iter() {
+            if file.is_file() {
+                reproduce(
+                    FuzzamotoReproducer::new(fuzzamoto_dir.clone(), file.clone()),
+                    &opts.output_dir,
+                )
+                .await;
+            } else if file.is_dir() {
+                let mut dir_entries = fs::read_dir(file).await?;
+                while let Some(entry) = dir_entries.next_entry().await? {
+                    reproduce(
+                        FuzzamotoReproducer::new(fuzzamoto_dir.clone(), entry.path()),
+                        &opts.output_dir,
+                    )
+                    .await;
+                }
+            }
+        }
 
         return Ok(());
     }
