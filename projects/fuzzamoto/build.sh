@@ -19,7 +19,7 @@ make -C depends DEBUG=1 NO_QT=1 NO_ZMQ=1 NO_USDT=1 \
 
 EXTRA_BUILD_OPTIONS=""
 if [[ "$FUZZING_ENGINE" = *"aflpp_asan"* ]]; then
-  # Do nothing
+  :
 elif [[ "$FUZZING_ENGINE" = *"aflpp"* ]]; then
   # Build with address sanitizer in the regular afl++ build as well, so that
   # reproductions work as expected.
