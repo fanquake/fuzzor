@@ -16,6 +16,42 @@ struct Options {
     pub harness: String,
 }
 
+async fn minimize_with_afl_nyx(
+    input: &PathBuf,
+    output: &PathBuf,
+    harness: &str,
+    config: &ProjectConfig,
+) -> Result<bool, std::io::Error> {
+    if !config.has_engine(&FuzzEngine::AflPlusPlusNyx) || !config.has_sanitizer(&Sanitizer::Address)
+    {
+        return Ok(false);
+    }
+
+    let binary = get_harness_binary(
+        &FuzzEngine::AflPlusPlusNyx,
+        &Sanitizer::Address,
+        harness,
+        config,
+    )
+    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Nyx share dir not found"))?;
+
+    Command::new(get_afl_tool_path(AflTool::AflCMin))
+        .args([
+            "-A",
+            "-X",
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+            "--",
+            binary.to_str().unwrap(),
+        ])
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map(|status| status.success())
+}
+
 async fn minimize_with_afl(
     input: &PathBuf,
     output: &PathBuf,
@@ -33,6 +69,7 @@ async fn minimize_with_afl(
 
     Command::new("afl-cmin")
         .args([
+            "-A",
             "-i",
             input.to_str().unwrap(),
             "-o",
@@ -139,6 +176,13 @@ async fn main() -> Result<(), std::io::Error> {
         &config,
     )
     .await?;
+    let afl_nyx_success = minimize_with_afl_nyx(
+        &opts.input_corpus,
+        &opts.output_corpus,
+        &opts.harness,
+        &config,
+    )
+    .await?;
     let libfuzzer_success = minimize_with_libfuzzer(
         &opts.input_corpus,
         &opts.output_corpus,
@@ -156,7 +200,12 @@ async fn main() -> Result<(), std::io::Error> {
     let native_go_success =
         copy_for_native_go(&opts.input_corpus, &opts.output_corpus, &config).await?;
 
-    if !afl_success && !libfuzzer_success && !honggfuzz_success && !native_go_success {
+    if !afl_success
+        && !afl_nyx_success
+        && !libfuzzer_success
+        && !honggfuzz_success
+        && !native_go_success
+    {
         std::process::exit(1);
     }
 
