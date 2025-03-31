@@ -65,9 +65,8 @@ impl FuzzamotoReproducer {
     }
 }
 
-#[async_trait::async_trait]
-impl Reproducer<FuzzamotoReproducerError> for FuzzamotoReproducer {
-    async fn reproduce(&self) -> Result<ReproducedSolution, FuzzamotoReproducerError> {
+impl FuzzamotoReproducer {
+    async fn inner_reproduce(&self) -> Result<ReproducedSolution, FuzzamotoReproducerError> {
         let workdir =
             tempfile::tempdir().map_err(|_| FuzzamotoReproducerError::FailedToCreateWorkdir)?;
 
@@ -132,5 +131,22 @@ impl Reproducer<FuzzamotoReproducerError> for FuzzamotoReproducer {
             input: test_case_bytes,
             trace,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl Reproducer<FuzzamotoReproducerError> for FuzzamotoReproducer {
+    async fn reproduce(&self) -> Result<ReproducedSolution, FuzzamotoReproducerError> {
+        const MAX_RETRIES: usize = 5;
+
+        let mut last_error = None;
+        for _ in 0..MAX_RETRIES {
+            match self.inner_reproduce().await {
+                Ok(solution) => return Ok(solution),
+                Err(e) => last_error = Some(e),
+            }
+        }
+
+        Err(last_error.unwrap())
     }
 }
