@@ -9,7 +9,7 @@ use fuzzor::{
 
 use async_trait::async_trait;
 use futures_util::stream::StreamExt;
-use fuzzor_infra::{FuzzerStats, ReproducedSolution};
+use fuzzor_infra::{FuzzerStats, ReproducedSolution, SolutionCause};
 use serde::{Deserialize, Serialize};
 
 pub const ENSEMBLE_DIR: &str = "/workdir/workspace";
@@ -280,13 +280,14 @@ impl DockerEnv {
                 continue;
             }
 
-            if let Ok(solution) = serde_yaml::from_reader(entry) {
-                let solution: ReproducedSolution = solution;
+            if let Ok(solution) = serde_yaml::from_reader::<_, ReproducedSolution>(entry) {
                 let trace = String::from_utf8(solution.trace).unwrap();
 
-                match solution.code {
-                    78 => solutions.push(Solution::from_timeout(solution.input, trace)),
-                    71 => {
+                match solution.cause {
+                    SolutionCause::Timeout => {
+                        solutions.push(Solution::from_timeout(solution.input, trace))
+                    }
+                    SolutionCause::Differential => {
                         solutions.push(Solution::from_differential_solution(solution.input, trace))
                     }
                     _ => solutions.push(Solution::from_crash(solution.input, trace)),

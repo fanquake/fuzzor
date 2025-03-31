@@ -4,7 +4,7 @@ use std::fmt::{self, Display};
 use std::path::PathBuf;
 
 use super::{create_cloned_files, Reproducer};
-use fuzzor_infra::{ReproducedSolution, Sanitizer};
+use fuzzor_infra::{ReproducedSolution, Sanitizer, SolutionCause};
 
 #[derive(Debug)]
 pub enum LibFuzzerReproducerError {
@@ -175,7 +175,14 @@ impl Reproducer<LibFuzzerReproducerError> for LibFuzzerReproducer {
             };
 
             return Ok(ReproducedSolution {
-                code,
+                cause: match (code, &self.sanitizer) {
+                    (78, _) => SolutionCause::Timeout,
+                    (66, _) => SolutionCause::SignalCrash,
+                    (_, Sanitizer::Address) => SolutionCause::AsanCrash,
+                    (_, Sanitizer::Undefined) => SolutionCause::UbsanCrash,
+                    (_, Sanitizer::Memory) => SolutionCause::MsanCrash,
+                    (_, _) => SolutionCause::Crash,
+                },
                 input: input_bytes,
                 trace,
             });

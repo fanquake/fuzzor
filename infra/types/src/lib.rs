@@ -134,21 +134,25 @@ impl FuzzerStats {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SolutionCause {
+    AsanCrash,
+    UbsanCrash,
+    MsanCrash,
+    Crash,
+    SignalCrash,
+    Timeout,
+    Differential,
+}
+
 #[serde_as]
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct ReproducedSolution {
-    /// Reproduction exit code:
-    ///   - 71: Differential solution
-    ///   - 75: ASan crash
-    ///   - 76: UBSan crash
-    ///   - 77: Regular crash (e.g. due to an assertion)
-    ///   - 66: Signal crash (could be one of the sanitizers)
-    ///   - 78: Timeout
-    pub code: i32,
-    /// Bytes of the input that trigger the solution
+    pub cause: SolutionCause,
+    /// Input bytes that trigger the solution
     #[serde_as(as = "Base64")]
     pub input: Vec<u8>,
-    /// A stack trace for crashes or a flamegraph SVG for timeouts
+    /// Stack trace for crashes or a flamegraph SVG for timeouts
     #[serde_as(as = "Base64")]
     pub trace: Vec<u8>,
 }
@@ -160,7 +164,7 @@ impl ReproducedSolution {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        format!("fuzzor-{}-{}-{:x}", time, self.code, input_hash)
+        format!("fuzzor-{}-{:?}-{:x}", time, self.cause, input_hash)
     }
 }
 

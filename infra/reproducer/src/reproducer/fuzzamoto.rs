@@ -1,5 +1,5 @@
 use super::{create_cloned_files, Reproducer};
-use fuzzor_infra::ReproducedSolution;
+use fuzzor_infra::{ReproducedSolution, SolutionCause};
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
@@ -128,7 +128,7 @@ impl Reproducer<FuzzamotoReproducerError> for FuzzamotoReproducer {
             .map_err(|_| FuzzamotoReproducerError::FailedToReadOutputFile)?;
 
         Ok(ReproducedSolution {
-            code: 75,
+            cause: SolutionCause::Crash,
             input: test_case_bytes,
             trace,
         })

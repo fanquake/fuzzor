@@ -4,7 +4,7 @@ use std::fmt::{self, Display};
 use std::path::PathBuf;
 
 use super::{create_cloned_files, Reproducer};
-use fuzzor_infra::ReproducedSolution;
+use fuzzor_infra::{ReproducedSolution, SolutionCause};
 
 #[derive(Debug)]
 pub enum NativeGoReproducerError {
@@ -93,7 +93,7 @@ impl Reproducer<NativeGoReproducerError> for NativeGoReproducer {
             .map_err(|_| NativeGoReproducerError::FailedToReadTestCase)?;
 
         return Ok(ReproducedSolution {
-            code: 77,
+            cause: SolutionCause::Crash,
             input: input_bytes,
             trace,
         });

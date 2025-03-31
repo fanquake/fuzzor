@@ -4,7 +4,7 @@ use std::fmt::{self, Display};
 use std::path::PathBuf;
 
 use super::Reproducer;
-use fuzzor_infra::ReproducedSolution;
+use fuzzor_infra::{ReproducedSolution, SolutionCause};
 
 #[derive(Debug)]
 pub enum SemSanReproducerError {
@@ -134,7 +134,7 @@ impl Reproducer<SemSanReproducerError> for SemSanReproducer {
                 .map_err(|_| SemSanReproducerError::FailedToReadStderrFile)?;
 
             return Ok(ReproducedSolution {
-                code: 71,
+                cause: SolutionCause::Differential,
                 input: test_case_bytes,
                 trace,
             });
