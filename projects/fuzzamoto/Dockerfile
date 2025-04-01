@@ -41,3 +41,8 @@ RUN --mount=type=cache,target=/ccache/ \
     --mount=type=cache,target=/ccache_cmplog/ \
     --mount=type=cache,target=/ccache_asan/ \
     builder $PWD/config.yaml $PWD/build.sh $FUZZOR_HARNESSES
+
+COPY ./dicts /dicts
+COPY ./fuzzamoto_scenario-generic.options.yaml /
+COPY ./fuzzamoto_scenario-http-server.options.yaml /
+COPY ./fuzzamoto_scenario-wallet-migration.options.yaml /
