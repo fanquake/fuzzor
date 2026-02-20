@@ -370,6 +370,14 @@ where
                     }
                     Err(err) => log::warn!("Could not fetch coverage report from env: {:?}", err),
                 }
+
+                match self.env.get_coverage_summary().await {
+                    Ok(summary) => {
+                        let harness = self.harness.lock().await;
+                        harness.state().store_coverage_summary(summary).await;
+                    }
+                    Err(err) => log::warn!("Could not fetch coverage summary from env: {:?}", err),
+                }
             }
 
             corpus

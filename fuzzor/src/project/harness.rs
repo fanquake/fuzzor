@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::solutions::{ondisk::OnDiskSolutionTracker, SolutionTracker};
 
+use chrono::Utc;
 use fuzzor_infra::FuzzerStats;
 use tokio::{
     fs::{File, OpenOptions},
@@ -23,6 +24,8 @@ pub trait HarnessState {
     async fn covers_file(&self, file: String) -> bool;
     /// Store a coverage report
     async fn store_coverage_report(&self, tar: Vec<u8>);
+    /// Store a coverage summary
+    async fn store_coverage_summary(&self, summary: Vec<u8>);
     /// Record stats
     async fn record_stats(&mut self, stats: FuzzerStats);
 }
@@ -151,13 +154,24 @@ impl HarnessState for PersistentHarnessState {
         }
     }
 
+    async fn store_coverage_summary(&self, summary: Vec<u8>) {
+        let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+        let filename = format!("coverage-summary-{}.json", timestamp);
+        let summary_path = self.path.join(&filename);
+
+        if let Err(err) = tokio::fs::write(&summary_path, &summary).await {
+            log::error!("Could not write coverage summary to {:?}: {:?}", summary_path, err);
+        }
+    }
+
     async fn record_stats(&mut self, stats: FuzzerStats) {
+        let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
         if let Err(err) = self
             .stats_file
             .write_all(
                 format!(
-                    "{:?},{},{}\n",
-                    stats.stability, stats.execs_per_sec, stats.corpus_count
+                    "{},{:?},{},{}\n",
+                    timestamp, stats.stability, stats.execs_per_sec, stats.corpus_count
                 )
                 .as_bytes(),
             )
