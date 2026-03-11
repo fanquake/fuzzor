@@ -294,6 +294,13 @@ async fn main() -> Result<(), String> {
 
     let (quit_tx, quit_rx) = tokio::sync::mpsc::channel(16);
 
+    let quit_signal = quit_tx.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        log::info!("Shutting down gracefully...");
+        let _ = quit_signal.send(false).await;
+    });
+
     if let Some(report_repo) = &opts.report_repo {
         let (owner, repo) = {
             let split: Vec<&str> = report_repo.split("/").collect();
