@@ -54,7 +54,7 @@ pub struct Campaign<E> {
 
 impl<E> Campaign<E>
 where
-    E: Environment,
+    E: Environment + Send,
 {
     pub async fn new(
         project_config: ProjectConfig,
@@ -223,6 +223,7 @@ where
                         self.project_config.name
                     );
 
+                    self.env.set_preserve(true).await;
                     end = true;
                 }
 

@@ -36,6 +36,8 @@ pub trait Environment {
     async fn shutdown(&mut self) -> bool;
     /// Check if the environment is reachable
     async fn ping(&self) -> Result<bool, String>;
+    /// Mark the environment to be kept on shutdown
+    async fn set_preserve(&mut self, _preserve: bool) {}
 }
 
 #[derive(Clone)]

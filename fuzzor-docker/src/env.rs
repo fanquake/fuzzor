@@ -36,6 +36,7 @@ pub struct DockerEnv {
     docker: bollard::Docker,
     container_id: String,
     machine: DockerMachine,
+    preserve: bool,
 
     params: EnvironmentParams,
 }
@@ -167,6 +168,7 @@ impl DockerEnv {
             docker,
             container_id,
             machine,
+            preserve: false,
             params,
         }
     }
@@ -475,7 +477,13 @@ impl Environment for DockerEnv {
             return false;
         }
 
-        if std::env::var("FUZZOR_DONT_REMOVE_CONTAINERS").is_err() {
+        if self.preserve {
+            log::warn!(
+                "Preserving container {} (harness='{}')",
+                &self.container_id[..8],
+                self.params.harness_name,
+            );
+        } else if std::env::var("FUZZOR_DONT_REMOVE_CONTAINERS").is_err() {
             if let Err(err) = self
                 .docker
                 .remove_container(
@@ -502,6 +510,10 @@ impl Environment for DockerEnv {
 
         log::trace!("Started docker env, container id={}", &self.container_id);
         Ok(())
+    }
+
+    async fn set_preserve(&mut self, preserve: bool) {
+        self.preserve = preserve;
     }
 
     async fn ping(&self) -> Result<bool, String> {
