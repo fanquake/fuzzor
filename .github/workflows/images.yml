@@ -16,10 +16,10 @@ jobs:
   build-base-image:
     runs-on: runs-on=${{ github.run_id }}/runner=32cpu-linux-x64/extras=ecr-cache/volume=120gb
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build and push base fuzzor image to ECR
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: infra/Dockerfile.base
@@ -44,10 +44,10 @@ jobs:
           - openssl
           - secp256k1
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build ${{ matrix.project }} fuzzor image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: projects/${{ matrix.project }}
           load: true
