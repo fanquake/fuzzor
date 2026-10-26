@@ -121,7 +121,10 @@ async fn main() -> Result<(), std::io::Error> {
     ];
     let libfuzzer_harnesses: Vec<(PathBuf, Sanitizer)> = sanitizers
         .iter()
-        .filter(|sanitizer| config.has_sanitizer(sanitizer))
+        .filter(|sanitizer| {
+            config.has_sanitizer(sanitizer)
+                && (**sanitizer != Sanitizer::Thread || config.harness_has_tsan(&opts.harness))
+        })
         .map(|sanitizer| {
             (
                 get_harness_binary(&FuzzEngine::LibFuzzer, sanitizer, &opts.harness, &config)
